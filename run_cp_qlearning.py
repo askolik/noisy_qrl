@@ -3,46 +3,41 @@ from utils.limit_thread_usage import set_thread_usage_limit
 set_thread_usage_limit(10, tf)
 
 from config import BASE_PATH
-from run import run_tsp_qlearning
+from run import run_cp_qlearning
 
 
 hyperparams = {
-    'n_vars': 10,
     'episodes': 1000,
-    'batch_size': 10,
+    'batch_size': 16,
     'epsilon': 1,
     'epsilon_decay': 0.99,
     'epsilon_min': 0.01,
-    'gamma': 0.9,
-    'update_after': 10,
-    'update_target_after': 30,
+    'gamma': 0.99,
+    'update_after': 1,
+    'update_target_after': 1,
     'learning_rate': 0.0001,
-    'learning_rate_out': 0.001,
-    'learning_rate_in': 0.001,
-    'n_layers': 1,
+    'learning_rate_in': 0.0001,
+    'learning_rate_out': 0.01,
+    'n_layers': 5,
     'epsilon_schedule': 'fast',
-    'memory_length': 10000,
-    'num_instances': 100,
     'use_reuploading': True,
     'trainable_scaling': True,
+    'trainable_obs_weight': True,
+    'output_factor': 1,
     'n_shots': 0,
     'n_trajectories': 0,
-    'param_perturbation': 0,
-    'single_qb_depol_error': 0,
-    'two_qb_depol_error': 0,
-    'bitflip_error': 0,
-    'amplitude_damp_error': 0,
     'ucb_alg': True,
     'ucb_alg_init_shots': 100,
     'ucb_alg_shot_increment': 100,
     'ucb_alg_max_shots': 1000,
-    'data_path': BASE_PATH + 'tsp/tsp_10_train/tsp_10_reduced_train.pickle',
-    'repetitions': 1,
+    'param_perturbation': 0.0,
+    'noise_p': 0,
+    'reps': 1,
     'save': False,
     'test': True
 }
 
 
 if __name__ == '__main__':
-    path = BASE_PATH
-    run_tsp_qlearning(hyperparams, path)
+    save_path = BASE_PATH
+    run_cp_qlearning(hyperparams, save_path)

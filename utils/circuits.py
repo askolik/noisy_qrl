@@ -1,6 +1,7 @@
 import cirq
 import sympy
 import numpy as np
+import tensorflow_quantum as tfq
 
 
 def graph_encoding_circuit(edges, qubits, n_layers, data_params):
@@ -41,7 +42,7 @@ def entangling_layer(qubits):
     return cz_ops
 
 
-def generate_circuit(qubits, n_layers, noise_p=0.):
+def generate_cp_pg_circuit(qubits, n_layers, noise_p=0.):
     """
     Prepares a data re-uploading circuit on `qubits` with `n_layers` layers.
     """
@@ -69,3 +70,45 @@ def generate_circuit(qubits, n_layers, noise_p=0.):
         circuit = circuit.with_noise(cirq.depolarize(noise_p))
 
     return circuit, list(params.flat), list(inputs.flat)
+
+
+def hwe_layer(qubits, symbols):
+    circuit = cirq.Circuit()
+    symbols = list(symbols)[::-1]
+
+    for i, qubit in enumerate(qubits):
+        circuit.append(cirq.ry(symbols.pop())(qubit))
+        circuit.append(cirq.rz(symbols.pop())(qubit))
+
+    for i in range(len(qubits)):
+        circuit.append(cirq.CZ(qubits[i], qubits[(i + 1) % len(qubits)]))
+
+    return circuit
+
+
+def generate_cp_q_circuit(n_qubits, n_layers, qubits, use_reuploading=True):
+    theta_dim = 2 * n_qubits * n_layers
+    params = sympy.symbols('theta(0:' + str(theta_dim) + ')')
+
+    if use_reuploading:
+        inputs = sympy.symbols(
+            'x(0:' + str(n_qubits) + ')' + '(0:' + str(n_layers) + ')')
+    else:
+        inputs = sympy.symbols('x(0:' + str(n_qubits) + ')')
+
+    circuit = cirq.Circuit()
+    for l in range(n_layers):
+        if use_reuploading:
+            for i in range(n_qubits):
+                circuit += cirq.rx(inputs[l + i * n_layers])(qubits[i])
+        if not use_reuploading and l == 0:
+            for i in range(n_qubits):
+                circuit += cirq.rx(inputs[i])(qubits[i])
+
+        circuit += hwe_layer(qubits, params[l * n_qubits * 2:(l + 1) * n_qubits * 2])
+
+    return circuit, theta_dim, params, inputs
+
+
+def empty_circuits(n):
+    return tfq.convert_to_tensor([cirq.Circuit()]*n)

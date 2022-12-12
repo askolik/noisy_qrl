@@ -1,7 +1,7 @@
 import gym
 import tensorflow as tf
 
-from utils.layers import ReUploadingPQC
+from utils.layers import ReUploadingPQC, Alternating
 from utils.storage import ScoresCheckpoint, MetaCallback
 
 tf.get_logger().setLevel('ERROR')
@@ -24,10 +24,6 @@ np.random.seed(seed)
 def generate_model_policy(
         qubits, n_layers, n_actions, beta, observables,
         noise_p=0., param_perturbation=0., n_shots=0):
-    """
-    Generates a Keras model for a data re-uploading PQC policy.
-    """
-
     input_tensor = tf.keras.Input(shape=(len(qubits),), dtype=tf.dtypes.float32, name='input')
 
     re_uploading_pqc = ReUploadingPQC(
@@ -43,6 +39,22 @@ def generate_model_policy(
     model = tf.keras.Model(inputs=[input_tensor], outputs=policy, name="QuantumActor")
 
     return model
+
+
+def compute_returns(rewards_history, gamma):
+    """Compute discounted returns with discount factor `gamma`."""
+    returns = []
+    discounted_sum = 0
+    for r in rewards_history[::-1]:
+        discounted_sum = r + gamma * discounted_sum
+        returns.insert(0, discounted_sum)
+
+    # Normalize them for faster and more stable learning
+    returns = np.array(returns)
+    returns = (returns - np.mean(returns)) / (np.std(returns) + 1e-8)
+    returns = returns.tolist()
+
+    return returns
 
 
 def logger(env_name, noise_p=0., n_qubits=4, n_layers=5, beta=1.0,
@@ -63,8 +75,6 @@ def logger(env_name, noise_p=0., n_qubits=4, n_layers=5, beta=1.0,
 
 
 def gather_episodes(state_bounds, n_actions, model, n_episodes, env_name):
-    """Interact with environment in batched fashion."""
-
     trajectories = [defaultdict(list) for _ in range(n_episodes)]
     envs = [gym.make(env_name) for _ in range(n_episodes)]
 
@@ -78,11 +88,9 @@ def gather_episodes(state_bounds, n_actions, model, n_episodes, env_name):
         for i, state in zip(unfinished_ids, normalized_states):
             trajectories[i]['states'].append(state)
 
-        # Compute policy for all unfinished envs in parallel
         states = tf.convert_to_tensor(normalized_states)
         action_probs = model([states])
 
-        # Store action and transition all environments to the next state
         states = [None for i in range(n_episodes)]
         for i, policy in zip(unfinished_ids, action_probs.numpy()):
             action = np.random.choice(n_actions, p=policy)
@@ -94,7 +102,7 @@ def gather_episodes(state_bounds, n_actions, model, n_episodes, env_name):
 
 
 # @tf.function  # decorator should make code faster but causes issues on cluster
-def reinforce_update(states, actions, returns, model, batch_size, optimizers, w_idx, baselines=None):
+def reinforce_update(states, actions, returns, model, batch_size, optimizers, w_idx):
     states = tf.convert_to_tensor(states)
     actions = tf.convert_to_tensor(actions)
     returns = tf.convert_to_tensor(returns)
@@ -104,20 +112,16 @@ def reinforce_update(states, actions, returns, model, batch_size, optimizers, w_
         logits = model(states)
         p_actions = tf.gather_nd(logits, actions)
         log_probs = tf.math.log(p_actions)
-
-        if baselines is not None:
-            loss = tf.math.reduce_sum(-log_probs * (returns-baselines)) / batch_size
-        else:
-            loss = tf.math.reduce_sum(-log_probs * returns) / batch_size
+        loss = tf.math.reduce_sum(-log_probs * returns) / batch_size
     grads = tape.gradient(loss, model.trainable_variables)
     for optimizer, w in zip(optimizers, w_idx):
         optimizer.apply_gradients([(grads[w], model.trainable_variables[w])])
 
 
-def main(noise_p=0., noise_type='depolarize', n_qubits=4, n_layers=5, beta=1.,
-         gamma=0.99, batch_size=10, max_episodes=1500,
-         lr_in=0.1, lr_var=0.01, lr_out=0.1, param_perturbation=0., add_baseline=False,
-         checkpoint=False, checkpoint_path='data/', save_as='test'):
+def train_cp_pg(noise_p=0., noise_type='depolarize', n_qubits=4, n_layers=5, beta=1.,
+                gamma=0.99, batch_size=10, max_episodes=1500,
+                lr_in=0.1, lr_var=0.01, lr_out=0.1, param_perturbation=0.,
+                checkpoint=False, checkpoint_path='data/', save_as='test'):
 
     if checkpoint:
         meta = {
@@ -131,7 +135,6 @@ def main(noise_p=0., noise_type='depolarize', n_qubits=4, n_layers=5, beta=1.,
             'learning_rate_var': lr_var,
             'learning_rate_out': lr_out,
             'param_perturbation': param_perturbation,
-            'baseline': add_baseline
         }
 
         scores_checkpoint = ScoresCheckpoint(checkpoint_path, save_as)
@@ -166,10 +169,6 @@ def main(noise_p=0., noise_type='depolarize', n_qubits=4, n_layers=5, beta=1.,
     w_in, w_var, w_out = 1, 0, 2
     w_idx = [w_in, w_var, w_out]
 
-    baselines = None
-    if add_baseline:
-        linear_baseline = LinearFeatureBaseline()
-
     ###########################################################################
     # TRAINING
     reward_threshold = 195  # Target threshold to consider env solved
@@ -180,10 +179,7 @@ def main(noise_p=0., noise_type='depolarize', n_qubits=4, n_layers=5, beta=1.,
     start_time = time.time()
     with tqdm.trange(max_episodes // batch_size) as t:
         for batch in t:
-            # Gather episodes
             episodes = gather_episodes(state_bounds, n_actions, model, batch_size, env_name)
-
-            # Group states, actions and returns in numpy arrays
             states = np.concatenate([ep['states'] for ep in episodes])
             actions = np.concatenate([ep['actions'] for ep in episodes])
             rewards = [ep['rewards'] for ep in episodes]
@@ -192,15 +188,9 @@ def main(noise_p=0., noise_type='depolarize', n_qubits=4, n_layers=5, beta=1.,
 
             id_action_pairs = np.array([[i, a] for i, a in enumerate(actions)])
 
-            if add_baseline:
-                linear_baseline.fit([ep['states'] for ep in episodes], returns)
-                baselines = linear_baseline.predict(states)
-
-            # Update model parameters.
             reinforce_update(
-                states, id_action_pairs, returns, model, batch_size, optimizers, w_idx, baselines)
+                states, id_action_pairs, returns, model, batch_size, optimizers, w_idx)
 
-            # Store collected rewards
             for ep_rwds in rewards:
                 tot_rew = np.sum(ep_rwds)
                 episode_history.append(tot_rew)

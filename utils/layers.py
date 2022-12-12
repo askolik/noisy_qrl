@@ -1,6 +1,9 @@
-
+import cirq
 import tensorflow as tf
+import tensorflow_quantum as tfq
 import numpy as np
+
+from utils.circuits import generate_cp_pg_circuit
 
 
 class TrainableRescaling(tf.keras.layers.Layer):
@@ -106,7 +109,8 @@ class ReUploadingPQC(tf.keras.layers.Layer):
         self.noise_p = noise_p
         self.param_perturbation = param_perturbation
 
-        circuit, theta_symbols, input_symbols = generate_circuit(qubits, n_layers, noise_p=self.noise_p)
+        circuit, theta_symbols, input_symbols = generate_cp_pg_circuit(
+            qubits, n_layers, noise_p=self.noise_p)
 
         theta_init = tf.random_uniform_initializer(minval=0.0, maxval=np.pi)
         self.theta = tf.Variable(
@@ -119,14 +123,12 @@ class ReUploadingPQC(tf.keras.layers.Layer):
             initial_value=lmbd_init, dtype="float32", trainable=True, name="lambdas"
         )
 
-        # Define explicit symbol order.
         symbols = [str(symb) for symb in theta_symbols + input_symbols]
         self.indices = tf.constant([symbols.index(a) for a in sorted(symbols)])
 
         self.activation = activation
         self.empty_circuit = tfq.convert_to_tensor([cirq.Circuit()])
 
-        ### NOTE: Execution times strongly depends on the repetition value!
         if self.noise_p >= 1e-5:
             self.computation_layer = tfq.layers.NoisyControlledPQC(circuit, observables,
                                                                    sample_based=False, repetitions=10)
@@ -140,7 +142,6 @@ class ReUploadingPQC(tf.keras.layers.Layer):
                     circuit, observables, differentiator=tfq.differentiators.Adjoint())
 
     def call(self, inputs):
-        # inputs[0] = encoding data for the state.
         batch_dim = tf.gather(tf.shape(inputs[0]), 0)
         tiled_up_circuits = tf.repeat(self.empty_circuit, repeats=batch_dim)
         tiled_up_thetas = tf.tile(self.theta, multiples=[batch_dim, 1])
@@ -151,27 +152,17 @@ class ReUploadingPQC(tf.keras.layers.Layer):
         joined_vars = tf.concat([tiled_up_thetas, squashed_inputs], axis=1)
         joined_vars = tf.gather(joined_vars, self.indices, axis=1)
 
-        # as an alternative to more efficiently simulate noise, put a
-        # Gaussian perturbation on all parameters (including data parameters)
         if self.param_perturbation > 0:
-            #print("Perturbing")
             perturbation_vec = tf.random.normal(
-                shape=tf.shape(joined_vars), # shape=tf.shape(joined_vars.shape[1])
+                shape=tf.shape(joined_vars),
                 mean=0, stddev=self.param_perturbation)
             perturbed_vars = tf.math.add(joined_vars, perturbation_vec)
-            #print("j = ", joined_vars, "\npvec = ", perturbation_vec, "\npvar = ", perturbed_vars)
-            #print(tf.shape(joined_vars.shape[1]), joined_vars.shape[1])
             joined_vars = perturbed_vars
 
         return self.computation_layer([tiled_up_circuits, joined_vars])
 
 
 class Alternating(tf.keras.layers.Layer):
-    """
-    Creates the weighted sum of observables with + and - signs (eg. Z*Z*Z*Z and -Z*Z*Z*Z)
-    To be checked with Sofiene, though.
-    """
-
     def __init__(self, output_dim):
         super(Alternating, self).__init__()
         self.w = tf.Variable(
@@ -180,3 +171,63 @@ class Alternating(tf.keras.layers.Layer):
 
     def call(self, inputs):
         return tf.matmul(inputs, self.w)
+
+
+class ScalableDataReuploadingController(tf.keras.layers.Layer):
+    def __init__(
+            self,
+            num_input_params,
+            num_params,
+            circuit_depth,
+            params,
+            trainable_scaling=True,
+            use_reuploading=True,
+            param_perturbation=0,
+            name="scalable_data_reuploading"):
+        super(ScalableDataReuploadingController, self).__init__(name=name)
+        self.num_params = num_params
+        self.param_perturbation = param_perturbation
+        self.circuit_depth = circuit_depth
+        self.use_reuploading = use_reuploading
+        self.num_input_params = num_input_params
+        if self.use_reuploading:
+            self.num_input_params *= circuit_depth
+
+        param_init = tf.random_uniform_initializer(minval=0., maxval=np.pi)
+        self.params = tf.Variable(
+            initial_value=param_init(shape=(1, num_params), dtype=tf.dtypes.float32),
+            trainable=True, name="params"
+        )
+
+        input_param_init = tf.ones(shape=(1, self.num_input_params))
+        self.input_params = tf.Variable(
+            initial_value=input_param_init, dtype=tf.dtypes.float32,
+            trainable=trainable_scaling, name="input_params"
+        )
+
+        alphabetical_params = sorted(params)
+        self.indices = tf.constant([alphabetical_params.index(a) for a in params])
+
+    def call(self, inputs):
+        output = tf.repeat(self.params, repeats=tf.shape(inputs)[0], axis=0)
+
+        input_repeats = self.circuit_depth if self.use_reuploading else 1
+        repeat_inputs = tf.repeat(inputs, repeats=input_repeats, axis=1)
+        repeat_inp_weights = tf.repeat(self.input_params, repeats=tf.shape(inputs)[0], axis=0)
+
+        output = tf.concat(
+            [
+                output,
+                tf.keras.layers.Activation('tanh')(tf.math.multiply(repeat_inputs, repeat_inp_weights))
+            ], 1)
+
+        output = tf.gather(output, self.indices, axis=1)
+
+        if self.param_perturbation > 0:
+            perturbation_vec = tf.random.normal(
+                shape=tf.shape(output),
+                mean=0, stddev=self.param_perturbation)
+            perturbed_vars = tf.math.add(output, perturbation_vec)
+            output = perturbed_vars
+
+        return output

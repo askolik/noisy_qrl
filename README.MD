@@ -5,28 +5,28 @@ To run a noisy quantum agent, pick one of the `run_`-files and specify the desir
 
 ## Shot noise
 
-| HP                     | meaning                                                             |
-|------------------------|---------------------------------------------------------------------|
-| n_shots                | number of measurements to estimate one expectation value            |
-| ucb_alg                | use UCB-inspired algorithm for flexible shot allocation             |
-| ucb_alg_init_shots     | number of measurements of first iteration of UCB-inspired algorithm |
- | ucb_alg_shot_increment | number of measurements in each consecutive step of algorithm        |
-| ucb_alg_max_shots      | maximum number of allowed shots                                     |
+| HP                     | default                | meaning                                                            |
+|------------------------|------------------------|---------------------------------------------------------------------|
+| n_shots                | 0                      | number of measurements to estimate one expectation value            |
+| ucb_alg                | False                  | use UCB-inspired algorithm for flexible shot allocation             |
+| ucb_alg_init_shots     | 100                    | number of measurements of first iteration of UCB-inspired algorithm |
+ | ucb_alg_shot_increment | 100                    | number of measurements in each consecutive step of algorithm        |
+| ucb_alg_max_shots      | 1000                   | maximum number of allowed shots                                     |
 
 
 ## Coherent noise
 
-| HP  | meaning                     |
-|-----|-----------------------------|
-| param_perturbation    | σ for Gaussian perturbation |
+| HP  | default | meaning                      |
+|-----|---------|------------------------------|
+| param_perturbation    | 0.1     |  σ for Gaussian perturbation |
 
 
 ## Incoherent noise
 
-| HP                    | meaning                                                    |
-|-----------------------|------------------------------------------------------------|
-| n_trajectories        | number of trajectories for Monte Carlo simulation of noise |
-| single_qb_depol_error | single-qubit depolarization noise strength                 |
-| two_qb_depol_error    | two-qubit depolarization noise strength                    |
-| bitflip_error         | bitflip error strength                                     |
-| amplitude_damp_error  | amplitude damping noise strength                           |
+| HP                    | default | meaning                                                    |
+|-----------------------|---------|------------------------------------------------------------|
+| n_trajectories        | 1000    | number of trajectories for Monte Carlo simulation of noise |
+| single_qb_depol_error | 0.001   | single-qubit depolarization noise strength                 |
+| two_qb_depol_error    | 0.01    | two-qubit depolarization noise strength                    |
+| bitflip_error         | 0.01    | bitflip error strength                                     |
+| amplitude_damp_error  | 0.0003  | amplitude damping noise strength                           |

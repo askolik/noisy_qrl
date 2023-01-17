@@ -1,4 +1,4 @@
-This repository contains code to train noisy quantum agents for variational Q-learning and policy gradients, as used in [arXiv:2212.09431](https://arxiv.org/pdf/2212.09431.pdf) .
+This repository contains code to train noisy quantum agents for variational Q-learning and policy gradients, as used in [arXiv:2212.09431](https://arxiv.org/pdf/2212.09431.pdf).
 The two environments implemented here are [CartPole from the OpenAI Gym](https://github.com/openai/gym/wiki/CartPole-v0) and the Traveling Salesperson Environment from [arXiv:2205.06109](https://arxiv.org/pdf/2205.06109). 
 
 To run a noisy quantum agent, pick one of the `run_`-files and specify the desired type of noise with the appropriate hyperparameters.
